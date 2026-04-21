@@ -10,10 +10,12 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import httpx
 from langchain.tools import BaseTool
 
-API_URL = "https://sentinelcorp-production.up.railway.app"  # Update after deploy
+# Override with SENTINELCORP_API_URL env var if deployed elsewhere
+API_URL = os.getenv("SENTINELCORP_API_URL", "https://sentinelcorp-production.up.railway.app")
 
 
 class SentinelCorpCompanyProfile(BaseTool):

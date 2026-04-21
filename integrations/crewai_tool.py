@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import httpx
 
 try:
@@ -12,7 +13,7 @@ except ImportError:
     except ImportError:
         raise ImportError("Install crewai: pip install crewai")
 
-API_URL = "https://sentinelcorp-production.up.railway.app"
+API_URL = os.getenv("SENTINELCORP_API_URL", "https://sentinelcorp-production.up.railway.app")
 
 
 class SentinelCorpProfileTool(BaseTool):

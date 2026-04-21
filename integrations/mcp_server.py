@@ -17,12 +17,13 @@ Add to MCP client config:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any
 
 import httpx
 
-API_URL = "https://sentinelcorp-production.up.railway.app"
+API_URL = os.getenv("SENTINELCORP_API_URL", "https://sentinelcorp-production.up.railway.app")
 
 TOOLS = [
     {
