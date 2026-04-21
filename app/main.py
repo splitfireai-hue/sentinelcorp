@@ -13,10 +13,32 @@ from slowapi.util import get_remote_address
 
 from app.config import settings, setup_logging
 from app.database import engine
+from app.middleware.auth import BillingAuthMiddleware
 from app.models import Base
-from app.routers import company, debarred, health, validate
+from app.routers import billing, company, debarred, health, validate
 
 logger = logging.getLogger(__name__)
+
+
+async def _migrate_api_keys_if_needed(conn) -> None:
+    """One-shot migration: the legacy api_keys table stored raw keys. Drop it if present
+    so the new billing schema can be created. Safe because the legacy table was never
+    written to in any deployed version."""
+    from sqlalchemy import inspect
+
+    def _inspect(sync_conn):
+        insp = inspect(sync_conn)
+        if not insp.has_table("api_keys"):
+            return False
+        cols = {c["name"] for c in insp.get_columns("api_keys")}
+        return "key_hash" not in cols
+
+    needs_drop = await conn.run_sync(_inspect)
+    if needs_drop:
+        logger.warning("Dropping legacy api_keys table to apply new billing schema")
+        from sqlalchemy import text
+
+        await conn.execute(text("DROP TABLE IF EXISTS api_keys"))
 
 
 @asynccontextmanager
@@ -24,6 +46,7 @@ async def lifespan(app: FastAPI):
     setup_logging()
     logger.info("Starting SentinelCorp (env=%s)", settings.ENVIRONMENT)
     async with engine.begin() as conn:
+        await _migrate_api_keys_if_needed(conn)
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables ready")
     yield
@@ -48,10 +71,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.origins_list,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     max_age=86400,
 )
+
+# Billing: API key auth + quota (no-op when BILLING_ENABLED=false)
+app.add_middleware(BillingAuthMiddleware, product=settings.BILLING_PRODUCT)
 
 
 @app.middleware("http")
@@ -160,12 +186,12 @@ h1{font-size:40px;font-weight:700;margin-bottom:8px;background:linear-gradient(1
 <code>curl "https://YOUR_URL/api/v1/company/profile?identifier=27AAAAA0000A1Z5"</code>
 </div>
 <div class="links">
-<a href="/docs" class="primary">API Docs</a>
-<a href="/info" class="secondary">Endpoints</a>
-<a href="/stats" class="secondary">Stats</a>
+<a href="/signup" class="primary">Get API Key</a>
+<a href="/docs" class="secondary">API Docs</a>
+<a href="/pricing" class="secondary">Pricing</a>
 <a href="https://github.com/splitfireai-hue/sentinelcorp" class="secondary">GitHub</a>
 </div>
-<p class="free">1,000 free requests &mdash; no signup, no API key</p>
+<p class="free">5,000 free requests/month &mdash; email signup, no credit card</p>
 <div class="footer">
 Part of the Sentinel Series &mdash; <a href="https://sentinelx402-production.up.railway.app">SentinelX402</a> (threat intel) + SentinelCorp (company risk)
 </div>
@@ -174,6 +200,7 @@ Part of the Sentinel Series &mdash; <a href="https://sentinelx402-production.up.
 
 # --- Routers ---
 app.include_router(health.router, tags=["Health"])
+app.include_router(billing.router, tags=["Billing"])
 app.include_router(validate.router, prefix="/api/v1/validate", tags=["Format Validation"])
 app.include_router(company.router, prefix="/api/v1/company", tags=["Company Risk Profile"])
 app.include_router(debarred.router, prefix="/api/v1/debarred", tags=["SEBI Debarred Entities"])

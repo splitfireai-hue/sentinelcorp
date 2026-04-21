@@ -33,11 +33,13 @@ async def health(db: AsyncSession = Depends(get_db)):
 
 @router.get("/info")
 async def info():
+    from app.services.auth import ANON_DAILY_LIMIT, TIERS
+
     return {
         "name": settings.API_TITLE,
         "version": settings.API_VERSION,
         "tagline": "India Company Risk Profile API for AI Agents",
-        "description": "Unified risk scoring from MCA, GST, Court records, and SEBI debarred entities. Built for agents. 1,000 free requests, no signup.",
+        "description": "Unified risk scoring from MCA, GST, Court records, and SEBI debarred entities. Built for agents.",
         "sibling_products": [
             {
                 "name": "SentinelX402",
@@ -45,9 +47,16 @@ async def info():
                 "url": "https://sentinelx402-production.up.railway.app",
             },
         ],
-        "free_tier": {
-            "enabled": settings.FREE_TIER_ENABLED,
-            "requests": settings.FREE_TIER_REQUESTS,
+        "billing": {
+            "enabled": settings.BILLING_ENABLED,
+            "anon_daily_limit": ANON_DAILY_LIMIT,
+            "free_tier_monthly": TIERS["free"].monthly_quota,
+            "signup_url": "/signup",
+            "pricing_url": "/pricing",
+            "rails": {
+                "razorpay": bool(settings.RAZORPAY_KEY_ID),
+                "stripe": bool(settings.STRIPE_SECRET_KEY),
+            },
         },
         "endpoints": [
             {"path": "/api/v1/validate/gstin", "method": "GET", "description": "Validate GSTIN format and checksum"},
@@ -57,6 +66,9 @@ async def info():
             {"path": "/api/v1/company/batch", "method": "POST", "description": "Batch risk profiling (up to 100 identifiers)"},
             {"path": "/api/v1/debarred/search", "method": "GET", "description": "Search SEBI/NSE/BSE debarred entities"},
             {"path": "/api/v1/debarred/list", "method": "GET", "description": "List recent debarred entities"},
+            {"path": "/billing/signup", "method": "POST", "description": "Self-serve free-tier API key"},
+            {"path": "/billing/me", "method": "GET", "description": "Current key info and monthly usage"},
+            {"path": "/pricing", "method": "GET", "description": "Tiers and pricing"},
         ],
     }
 

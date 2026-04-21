@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Float, Integer, String, Text, Index
+from sqlalchemy import DateTime, Float, String, Text, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -64,15 +64,3 @@ class LookupHistory(Base):
     )
 
 
-class APIKey(Base):
-    __tablename__ = "api_keys"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    name: Mapped[str] = mapped_column(String(200))
-    email: Mapped[str] = mapped_column(String(200), default="")
-    tier: Mapped[str] = mapped_column(String(20), default="free")
-    monthly_quota: Mapped[int] = mapped_column(Integer, default=10000)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    last_used: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    active: Mapped[bool] = mapped_column(default=True)

@@ -29,6 +29,25 @@ class Settings(BaseSettings):
     # Admin
     ADMIN_SECRET: str = ""
 
+    # Billing
+    BILLING_ENABLED: bool = False
+    BILLING_PRODUCT: str = "sentinelcorp"
+    PUBLIC_BASE_URL: str = ""
+
+    # Razorpay (India — UPI/cards/netbanking)
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
+    RAZORPAY_PLAN_DEV: str = ""
+    RAZORPAY_PLAN_STARTUP: str = ""
+
+    # Stripe (global — cards)
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_PUBLISHABLE_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRICE_DEV: str = ""
+    STRIPE_PRICE_STARTUP: str = ""
+
     # Third-party APIs (optional — use for MCA/GST data)
     SUREPASS_API_KEY: str = ""
     JAMKU_API_KEY: str = ""
