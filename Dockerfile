@@ -24,7 +24,8 @@ ENV FREE_TIER_ENABLED=true
 ENV FREE_TIER_REQUESTS=1000
 ENV ADMIN_SECRET=""
 
-CMD python -m app.data.seed_debarred || echo "Seed skipped" ; \
+CMD python -m app.scrapers.sebi_defaulters || echo "Scraper skipped" ; \
+    python -m app.data.seed_debarred || echo "Seed skipped" ; \
     python -m gunicorn app.main:app \
         --worker-class uvicorn.workers.UvicornWorker \
         --bind 0.0.0.0:$PORT \
