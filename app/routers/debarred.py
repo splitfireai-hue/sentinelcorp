@@ -48,16 +48,26 @@ async def search_debarred(
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    """Search SEBI/NSE/BSE debarred entities by name."""
+    """Search SEBI/NSE/BSE debarred entities by name.
+
+    Matches as whole-word tokens to avoid false positives
+    (e.g. "infosys" won't match "infosystems").
+    """
     name_lower = name.strip().lower()
+    conditions = [
+        DebarredEntity.name_normalized == name_lower,
+        DebarredEntity.name_normalized.like("{} %".format(name_lower)),
+        DebarredEntity.name_normalized.like("% {}".format(name_lower)),
+        DebarredEntity.name_normalized.like("% {} %".format(name_lower)),
+    ]
+    tokens = [t for t in name_lower.split() if len(t) >= 5]
+    for t in tokens[:5]:
+        conditions.append(DebarredEntity.name_normalized.like("{} %".format(t)))
+        conditions.append(DebarredEntity.name_normalized.like("% {}".format(t)))
+        conditions.append(DebarredEntity.name_normalized.like("% {} %".format(t)))
     stmt = (
         select(DebarredEntity)
-        .where(
-            or_(
-                DebarredEntity.name_normalized == name_lower,
-                DebarredEntity.name_normalized.like("%{}%".format(name_lower)),
-            )
-        )
+        .where(or_(*conditions))
         .limit(limit)
     )
     result = await db.execute(stmt)

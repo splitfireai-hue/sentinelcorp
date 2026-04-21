@@ -68,26 +68,32 @@ async def company_profile(
 async def batch_profile(
     request: Request,
     body: BatchRiskRequest,
-    db: AsyncSession = Depends(get_db),
 ):
     """Batch risk profiling for up to 100 identifiers in one request.
 
-    Perfect for agent workflows processing lists of companies.
+    Uses a fresh DB session per identifier to isolate transaction failures —
+    one bad identifier won't fail the whole batch.
     """
+    from app.database import async_session
+
     client_id = _client_id_from_request(request)
     results = []
     errors = []
+
     for ident in body.identifiers:
         try:
-            profile = await risk_service.profile_company(
-                identifier=ident,
-                db=db,
-                identifier_type=body.identifier_type,
-                client_id=client_id,
-            )
-            results.append(profile)
+            async with async_session() as session:
+                profile = await risk_service.profile_company(
+                    identifier=ident,
+                    db=session,
+                    identifier_type=body.identifier_type,
+                    client_id=client_id,
+                )
+                results.append(profile)
         except Exception as e:
-            errors.append({"identifier": ident, "error": str(e)})
+            # Don't leak stack traces, truncate error
+            err_msg = str(e).split("\n")[0][:200]
+            errors.append({"identifier": ident, "error": err_msg})
 
     return BatchRiskResponse(
         total=len(results),
