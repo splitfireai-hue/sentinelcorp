@@ -1,0 +1,19 @@
+[project]
+name = "sentinelcorp"
+version = "0.1.0"
+description = "Python SDK for SentinelCorp — India company risk profile API for AI agents"
+requires-python = ">=3.8"
+dependencies = ["httpx>=0.24.0"]
+readme = "README.md"
+license = {text = "MIT"}
+keywords = ["india", "compliance", "gstin", "cin", "pan", "sebi", "risk", "ai-agents", "mcp"]
+
+[project.urls]
+Homepage = "https://github.com/splitfireai-hue/sentinelcorp"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["sentinelcorp*"]

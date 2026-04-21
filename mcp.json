@@ -1,0 +1,71 @@
+{
+  "name": "SentinelCorp",
+  "tagline": "India company risk profile API for AI agents",
+  "description": "Free API for validating Indian company identifiers (GSTIN, CIN, PAN), checking SEBI debarred entities, and computing unified risk scores. Built for agent workflows with MCP, LangChain, CrewAI, OpenAI integrations.",
+  "category": "compliance",
+  "keywords": [
+    "india company risk API",
+    "GSTIN validator",
+    "CIN validator",
+    "SEBI debarred entities API",
+    "indian compliance API",
+    "KYB India",
+    "due diligence API india",
+    "MCP india compliance",
+    "company verification india",
+    "risk scoring API"
+  ],
+  "data_sources": [
+    "SEBI / NSE / BSE debarred entities (OpenSanctions)",
+    "GSTIN checksum validation (Luhn mod-36)",
+    "CIN format validation + metadata extraction",
+    "PAN format validation"
+  ],
+  "tools": [
+    {
+      "name": "company_risk_profile",
+      "description": "Get unified risk profile for an Indian company from CIN/GSTIN/PAN/name.",
+      "endpoint": "GET /api/v1/company/profile?identifier={value}",
+      "latency": "<300ms"
+    },
+    {
+      "name": "batch_profile",
+      "description": "Risk profile up to 100 Indian companies in one request.",
+      "endpoint": "POST /api/v1/company/batch"
+    },
+    {
+      "name": "validate_gstin",
+      "description": "Validate GSTIN format + checksum, extract state + PAN + entity.",
+      "endpoint": "GET /api/v1/validate/gstin?gstin={value}",
+      "latency": "<20ms"
+    },
+    {
+      "name": "validate_cin",
+      "description": "Validate CIN format and extract listing status, state, year, industry, ownership.",
+      "endpoint": "GET /api/v1/validate/cin?cin={value}",
+      "latency": "<20ms"
+    },
+    {
+      "name": "validate_pan",
+      "description": "Validate PAN format and identify PAN type.",
+      "endpoint": "GET /api/v1/validate/pan?pan={value}",
+      "latency": "<20ms"
+    },
+    {
+      "name": "search_debarred",
+      "description": "Search SEBI/NSE/BSE debarred entities by name (14,000+ entities).",
+      "endpoint": "GET /api/v1/debarred/search?name={value}"
+    }
+  ],
+  "free_tier": {
+    "requests": 1000,
+    "no_signup_required": true
+  },
+  "sibling_products": [
+    {
+      "name": "SentinelX402",
+      "description": "Threat intelligence API for AI agents with CERT-In India advisories",
+      "url": "https://github.com/splitfireai-hue/sentinelx402"
+    }
+  ]
+}

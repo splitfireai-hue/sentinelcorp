@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Virtual envs
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Tests
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+test.db
+
+# Database
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Scraped data (too large for repo, generated fresh)
+app/data/sebi_defaulters.json
+
+# Proprietary / secret
+.production/

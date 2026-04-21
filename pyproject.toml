@@ -1,0 +1,37 @@
+[project]
+name = "sentinelcorp"
+version = "0.1.0"
+description = "India Company Risk Profile API — unified risk scoring from MCA, GST, Court, SEBI data. Built for AI agents."
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.19.0",
+    "greenlet>=3.0",
+    "pydantic-settings>=2.0",
+    "pydantic[email]>=2.0",
+    "slowapi>=0.1.9",
+    "httpx>=0.24.0",
+    "openpyxl>=3.1.0",
+    "beautifulsoup4>=4.12.0",
+]
+
+[project.optional-dependencies]
+production = [
+    "gunicorn>=21.0",
+    "asyncpg>=0.28.0",
+    "redis>=5.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
