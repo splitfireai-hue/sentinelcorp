@@ -56,6 +56,7 @@ async def info():
             "rails": {
                 "razorpay": bool(settings.RAZORPAY_KEY_ID),
                 "stripe": bool(settings.STRIPE_SECRET_KEY),
+                "x402": settings.X402_ENABLED and bool(settings.X402_WALLET_ADDRESS),
             },
         },
         "endpoints": [

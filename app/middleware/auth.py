@@ -129,6 +129,14 @@ class BillingAuthMiddleware(BaseHTTPMiddleware):
                 response.headers["X-RateLimit-Remaining"] = str(max(api_key.monthly_quota - used - 1, 0))
                 return response
 
+            # When x402 is enabled, fall through unauthed requests so the x402
+            # middleware can demand per-call payment. Tracking still happens for
+            # observability but the daily limit doesn't block.
+            if settings.X402_ENABLED:
+                request.state.api_key_id = None
+                request.state.api_key_tier = "x402"
+                return await call_next(request)
+
             ip = _client_ip(request)
             count = await auth_service.anon_count_and_increment(session, ip)
             if count > auth_service.ANON_DAILY_LIMIT:

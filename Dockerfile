@@ -5,7 +5,9 @@ RUN pip install --no-cache-dir --upgrade pip
 
 COPY pyproject.toml .
 RUN pip install --no-cache-dir --prefix=/install . && \
-    pip install --no-cache-dir --prefix=/install gunicorn greenlet asyncpg
+    pip install --no-cache-dir --prefix=/install gunicorn greenlet asyncpg && \
+    pip install --no-cache-dir --prefix=/install "x402[fastapi,evm]>=0.1.0" || \
+    echo "x402 SDK install failed (non-blocking — only needed when X402_ENABLED=true)"
 
 FROM python:3.11-slim
 

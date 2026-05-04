@@ -79,6 +79,34 @@ app.add_middleware(
 # Billing: API key auth + quota (no-op when BILLING_ENABLED=false)
 app.add_middleware(BillingAuthMiddleware, product=settings.BILLING_PRODUCT)
 
+# x402: per-call USDC payment for autonomous agents. Loaded only when
+# X402_ENABLED=true. Mounted before BillingAuthMiddleware so that requests with a
+# valid API key are short-circuited by billing and never reach x402; agents
+# without a key fall through to x402 and get a 402 with payment requirements.
+if settings.X402_ENABLED:
+    from app import x402_setup
+
+    if x402_setup.is_available():
+        try:
+            from x402.http.middleware.fastapi import PaymentMiddlewareASGI
+
+            x402_server = x402_setup.create_x402_server()
+            x402_routes = x402_setup.get_routes_config()
+            app.add_middleware(PaymentMiddlewareASGI, routes=x402_routes, server=x402_server)
+            logger.info(
+                "x402 enabled: %d routes priced, wallet=%s, network=%s",
+                len(x402_routes),
+                settings.X402_WALLET_ADDRESS[:10] + "..." if settings.X402_WALLET_ADDRESS else "(unset)",
+                settings.X402_NETWORK_ID,
+            )
+        except Exception as e:
+            logger.error("x402 wiring failed despite SDK being importable: %s", e)
+    else:
+        logger.warning(
+            "X402_ENABLED=true but x402 SDK is not installed in this environment. "
+            "Install with: pip install 'x402[fastapi,evm]>=0.1.0' (requires Python >=3.10)"
+        )
+
 
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):

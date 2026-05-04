@@ -48,6 +48,16 @@ class Settings(BaseSettings):
     STRIPE_PRICE_DEV: str = ""
     STRIPE_PRICE_STARTUP: str = ""
 
+    # x402 (per-call USDC payments for autonomous agents)
+    X402_ENABLED: bool = False
+    X402_WALLET_ADDRESS: str = ""
+    X402_FACILITATOR_URL: str = "https://x402.org/facilitator"
+    X402_NETWORK_ID: str = "eip155:8453"
+    X402_PRICE_PROFILE: str = "$0.01"
+    X402_PRICE_VALIDATE: str = "$0.005"
+    X402_PRICE_DEBARRED: str = "$0.005"
+    X402_PRICE_BATCH: str = "$0.10"
+
     # Third-party APIs (optional — use for MCA/GST data)
     SUREPASS_API_KEY: str = ""
     JAMKU_API_KEY: str = ""

@@ -226,3 +226,33 @@ async def handle_event(session: AsyncSession, event) -> dict:
         return {"ok": True, "event": etype}
 
     return {"ok": True, "ignored": True, "event": etype}
+
+
+async def cancel_subscription(session: AsyncSession, sub: Subscription) -> dict:
+    if not _is_configured():
+        raise RuntimeError("Stripe is not configured on this server")
+    _configure()
+    try:
+        result = stripe.Subscription.modify(sub.external_subscription_id, cancel_at_period_end=True)
+    except Exception as e:
+        logger.exception("Stripe Subscription.modify failed")
+        raise RuntimeError("Failed to cancel: {}".format(e))
+    sub.cancel_at_period_end = True
+    sub.status = result.status
+    sub.updated_at = datetime.utcnow()
+    await session.commit()
+    return {"ok": True, "status": sub.status, "cancel_at_period_end": True}
+
+
+async def create_billing_portal(sub: Subscription, return_url: str) -> str:
+    if not _is_configured():
+        raise RuntimeError("Stripe is not configured on this server")
+    if not sub.external_customer_id:
+        raise RuntimeError("Subscription has no customer id yet — payment may still be processing")
+    _configure()
+    portal = stripe.billing_portal.Session.create(
+        customer=sub.external_customer_id, return_url=return_url
+    )
+    return portal.url
+
+

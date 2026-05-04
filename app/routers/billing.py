@@ -283,7 +283,20 @@ async def pricing_json():
         "rails": {
             "razorpay": bool(settings.RAZORPAY_KEY_ID),
             "stripe": bool(settings.STRIPE_SECRET_KEY),
+            "x402": settings.X402_ENABLED and bool(settings.X402_WALLET_ADDRESS),
         },
+        "x402": {
+            "enabled": settings.X402_ENABLED,
+            "wallet": settings.X402_WALLET_ADDRESS,
+            "network": settings.X402_NETWORK_ID,
+            "facilitator": settings.X402_FACILITATOR_URL,
+            "prices": {
+                "validate": settings.X402_PRICE_VALIDATE,
+                "profile": settings.X402_PRICE_PROFILE,
+                "debarred": settings.X402_PRICE_DEBARRED,
+                "batch": settings.X402_PRICE_BATCH,
+            },
+        } if settings.X402_ENABLED else None,
     }
 
 
@@ -571,6 +584,334 @@ async def stripe_webhook(request: Request, session: AsyncSession = Depends(get_d
         raise HTTPException(status_code=400, detail="invalid signature")
     result = await stripe_service.handle_event(session, event)
     return JSONResponse(result)
+
+
+class SubscriptionInfo(BaseModel):
+    rail: str
+    plan: str
+    status: str
+    currency: str
+    amount_minor: int
+    current_period_start: Optional[str]
+    current_period_end: Optional[str]
+    cancel_at_period_end: bool
+
+
+class DashboardData(BaseModel):
+    key: KeyInfoResponse
+    subscription: Optional[SubscriptionInfo] = None
+
+
+async def _latest_subscription(session: AsyncSession, api_key_id: int):
+    from sqlalchemy import desc, select as _select
+
+    from app.models.billing import Subscription
+
+    result = await session.execute(
+        _select(Subscription)
+        .where(Subscription.api_key_id == api_key_id)
+        .order_by(desc(Subscription.created_at))
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+@router.get("/billing/subscription", response_model=DashboardData)
+async def my_subscription(
+    api_key=Depends(_require_key),
+    session: AsyncSession = Depends(get_db),
+):
+    used = await auth_service.get_monthly_count(session, api_key.id, settings.BILLING_PRODUCT)
+    key_info = KeyInfoResponse(
+        prefix=api_key.key_prefix,
+        last4=api_key.key_last4,
+        tier=api_key.tier,
+        status=api_key.status,
+        email=api_key.email,
+        monthly_quota=api_key.monthly_quota,
+        used_this_month=used,
+        remaining=max(api_key.monthly_quota - used, 0),
+        rate_limit_per_min=api_key.rate_limit_per_min,
+    )
+    sub = await _latest_subscription(session, api_key.id)
+    sub_info = None
+    if sub is not None:
+        sub_info = SubscriptionInfo(
+            rail=sub.rail,
+            plan=sub.plan,
+            status=sub.status,
+            currency=sub.currency,
+            amount_minor=sub.amount_minor,
+            current_period_start=sub.current_period_start.isoformat() if sub.current_period_start else None,
+            current_period_end=sub.current_period_end.isoformat() if sub.current_period_end else None,
+            cancel_at_period_end=sub.cancel_at_period_end,
+        )
+    return DashboardData(key=key_info, subscription=sub_info)
+
+
+@router.post("/billing/cancel")
+async def cancel_my_subscription(
+    api_key=Depends(_require_key),
+    session: AsyncSession = Depends(get_db),
+):
+    sub = await _latest_subscription(session, api_key.id)
+    if sub is None:
+        raise HTTPException(status_code=404, detail="No subscription found for this key")
+    if sub.status not in ("active", "authenticated", "past_due"):
+        raise HTTPException(status_code=400, detail="Subscription is already {}".format(sub.status))
+    try:
+        if sub.rail == "razorpay":
+            return await razorpay_service.cancel_subscription(session, sub)
+        if sub.rail == "stripe":
+            return await stripe_service.cancel_subscription(session, sub)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    raise HTTPException(status_code=400, detail="Unknown rail: {}".format(sub.rail))
+
+
+@router.get("/billing/portal")
+async def billing_portal(
+    api_key=Depends(_require_key),
+    session: AsyncSession = Depends(get_db),
+):
+    sub = await _latest_subscription(session, api_key.id)
+    if sub is None or sub.rail != "stripe":
+        raise HTTPException(
+            status_code=400,
+            detail="Self-serve portal only available for Stripe subscriptions",
+        )
+    return_url = _public_url("/billing/dashboard")
+    try:
+        url = await stripe_service.create_billing_portal(sub, return_url)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"url": url}
+
+
+DASHBOARD_PAGE = """<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Billing dashboard — SentinelCorp</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e0e0e0;min-height:100vh;padding:32px 16px}
+.wrap{max-width:720px;margin:0 auto}
+h1{font-size:28px;margin-bottom:24px;background:linear-gradient(135deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.card{background:#161616;border:1px solid #222;border-radius:12px;padding:24px;margin-bottom:16px}
+.row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #1a1a1a}
+.row:last-child{border:none}
+.label{color:#888;font-size:13px}
+.val{color:#e0e0e0;font-size:14px;font-weight:500}
+.bar{height:10px;background:#0d0d0d;border-radius:5px;overflow:hidden;margin:8px 0 4px}
+.fill{height:100%;background:linear-gradient(90deg,#3b82f6,#a78bfa);transition:width 0.4s}
+.warn .fill{background:#f59e0b}
+.crit .fill{background:#ef4444}
+.usage-num{font-size:24px;font-weight:700;margin-bottom:4px}
+.usage-sub{font-size:12px;color:#666}
+button{padding:10px 18px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:600}
+.btn-primary{background:#3b82f6;color:#fff}
+.btn-primary:hover{background:#2563eb}
+.btn-danger{background:#161616;color:#f87171;border:1px solid #5c1a1a}
+.btn-danger:hover{background:#2a0e0e}
+.actions{display:flex;gap:8px;margin-top:16px}
+.tag{display:inline-block;padding:3px 8px;border-radius:4px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px}
+.tag-active{background:#1a3d1a;color:#4ade80}
+.tag-cancelled,.tag-past_due{background:#3d1a1a;color:#f87171}
+.tag-pending{background:#3d2f1a;color:#f59e0b}
+.tag-free,.tag-dev,.tag-startup,.tag-enterprise{background:#1a2a3d;color:#60a5fa}
+#login{max-width:420px;margin:80px auto;background:#161616;border:1px solid #222;border-radius:12px;padding:32px}
+#login h2{margin-bottom:8px;font-size:22px}
+#login p{color:#888;font-size:13px;margin-bottom:16px}
+#login input{width:100%;padding:11px;background:#0d0d0d;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;font-family:'SF Mono',Monaco,monospace;margin-bottom:12px}
+#main{display:none}
+.error{color:#f87171;font-size:12px;margin-top:8px}
+a{color:#60a5fa;text-decoration:none}
+.foot{text-align:center;font-size:12px;color:#555;margin-top:24px}
+</style></head><body>
+<div class="wrap">
+<div id="login">
+<h2>Sign in with API key</h2>
+<p>Paste your <code>sk_live_...</code> key. Stored in your browser, never sent anywhere except sentinelcorp.</p>
+<input id="key-input" placeholder="sk_live_..." autocomplete="off">
+<button class="btn-primary" onclick="signIn()" style="width:100%">Continue</button>
+<div id="login-err" class="error"></div>
+<p style="margin-top:16px">Don't have a key? <a href="/signup">Get one free</a></p>
+</div>
+
+<div id="main">
+<h1>Billing dashboard</h1>
+
+<div class="card">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+<div>
+<div class="usage-num" id="used">0</div>
+<div class="usage-sub">of <span id="quota">0</span> requests this month</div>
+</div>
+<div style="text-align:right">
+<div class="usage-num" id="remaining">0</div>
+<div class="usage-sub">remaining</div>
+</div>
+</div>
+<div class="bar" id="bar-wrap"><div class="fill" id="bar"></div></div>
+</div>
+
+<div class="card">
+<h2 style="font-size:16px;margin-bottom:12px;color:#aaa">API key</h2>
+<div class="row"><span class="label">Key</span><span class="val" id="prefix"></span></div>
+<div class="row"><span class="label">Tier</span><span class="val"><span class="tag" id="tier"></span></span></div>
+<div class="row"><span class="label">Status</span><span class="val"><span class="tag" id="status"></span></span></div>
+<div class="row"><span class="label">Email</span><span class="val" id="email"></span></div>
+<div class="row"><span class="label">Rate limit</span><span class="val" id="ratelimit"></span></div>
+</div>
+
+<div class="card" id="sub-card" style="display:none">
+<h2 style="font-size:16px;margin-bottom:12px;color:#aaa">Subscription</h2>
+<div class="row"><span class="label">Plan</span><span class="val" id="sub-plan"></span></div>
+<div class="row"><span class="label">Rail</span><span class="val" id="sub-rail"></span></div>
+<div class="row"><span class="label">Amount</span><span class="val" id="sub-amount"></span></div>
+<div class="row"><span class="label">Status</span><span class="val"><span class="tag" id="sub-status"></span></span></div>
+<div class="row"><span class="label">Renews</span><span class="val" id="sub-renews"></span></div>
+<div class="actions">
+<button class="btn-primary" id="portal-btn" onclick="portal()" style="display:none">Manage subscription</button>
+<button class="btn-danger" id="cancel-btn" onclick="cancelSub()">Cancel</button>
+</div>
+<div id="action-msg" class="error" style="margin-top:10px"></div>
+</div>
+
+<div class="actions">
+<button class="btn-danger" onclick="signOut()">Sign out</button>
+<a href="/pricing"><button class="btn-primary">Upgrade plan</button></a>
+</div>
+
+<p class="foot">Need help? Email support@sentinelcorp.dev</p>
+</div>
+</div>
+
+<script>
+const KEY_STORE = 'sentinelcorp_api_key';
+
+function signIn() {
+  const k = document.getElementById('key-input').value.trim();
+  if (!k.startsWith('sk_live_') && !k.startsWith('sk_test_')) {
+    document.getElementById('login-err').textContent = "Doesn't look like a SentinelCorp key.";
+    return;
+  }
+  localStorage.setItem(KEY_STORE, k);
+  load();
+}
+
+function signOut() {
+  localStorage.removeItem(KEY_STORE);
+  document.getElementById('main').style.display = 'none';
+  document.getElementById('login').style.display = 'block';
+}
+
+function fmtAmount(currency, minor) {
+  if (!minor) return 'Free';
+  const major = (minor / 100).toFixed(2);
+  return (currency === 'INR' ? '\u20B9' : '$') + major + '/mo';
+}
+
+function fmtDate(iso) {
+  if (!iso) return '\u2014';
+  return new Date(iso).toLocaleDateString();
+}
+
+async function load() {
+  const k = localStorage.getItem(KEY_STORE);
+  if (!k) return;
+  try {
+    const r = await fetch('/billing/subscription', {headers: {'X-API-Key': k}});
+    if (r.status === 401) { signOut(); return; }
+    const d = await r.json();
+    document.getElementById('login').style.display = 'none';
+    document.getElementById('main').style.display = 'block';
+
+    const ki = d.key;
+    document.getElementById('used').textContent = ki.used_this_month.toLocaleString();
+    document.getElementById('quota').textContent = ki.monthly_quota.toLocaleString();
+    document.getElementById('remaining').textContent = ki.remaining.toLocaleString();
+    const pct = Math.min(100, (ki.used_this_month / ki.monthly_quota) * 100);
+    document.getElementById('bar').style.width = pct + '%';
+    const wrap = document.getElementById('bar-wrap');
+    wrap.classList.remove('warn', 'crit');
+    if (pct >= 90) wrap.classList.add('crit');
+    else if (pct >= 75) wrap.classList.add('warn');
+
+    document.getElementById('prefix').textContent = ki.prefix + '...' + ki.last4;
+    const tagTier = document.getElementById('tier');
+    tagTier.textContent = ki.tier;
+    tagTier.className = 'tag tag-' + ki.tier;
+    const tagStatus = document.getElementById('status');
+    tagStatus.textContent = ki.status;
+    tagStatus.className = 'tag tag-' + ki.status;
+    document.getElementById('email').textContent = ki.email;
+    document.getElementById('ratelimit').textContent = ki.rate_limit_per_min + ' req/min';
+
+    if (d.subscription) {
+      const s = d.subscription;
+      document.getElementById('sub-card').style.display = 'block';
+      document.getElementById('sub-plan').textContent = s.plan;
+      document.getElementById('sub-rail').textContent = s.rail;
+      document.getElementById('sub-amount').textContent = fmtAmount(s.currency, s.amount_minor);
+      const sst = document.getElementById('sub-status');
+      sst.textContent = s.status;
+      sst.className = 'tag tag-' + s.status;
+      document.getElementById('sub-renews').textContent =
+        s.cancel_at_period_end
+          ? 'Cancels on ' + fmtDate(s.current_period_end)
+          : (s.current_period_end ? fmtDate(s.current_period_end) : 'Pending payment');
+      if (s.rail === 'stripe' && s.status === 'active') {
+        document.getElementById('portal-btn').style.display = 'inline-block';
+      }
+      if (s.status !== 'active' || s.cancel_at_period_end) {
+        document.getElementById('cancel-btn').style.display = 'none';
+      }
+    }
+  } catch (e) {
+    document.getElementById('login-err').textContent = 'Failed to load: ' + e.message;
+  }
+}
+
+async function cancelSub() {
+  if (!confirm('Cancel subscription? You will keep access until the period ends, then drop to free tier.')) return;
+  const k = localStorage.getItem(KEY_STORE);
+  const msg = document.getElementById('action-msg');
+  msg.textContent = '';
+  try {
+    const r = await fetch('/billing/cancel', {method: 'POST', headers: {'X-API-Key': k}});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Cancel failed');
+    msg.style.color = '#4ade80';
+    msg.textContent = 'Cancelled. Access continues until period end.';
+    setTimeout(load, 800);
+  } catch (e) {
+    msg.style.color = '#f87171';
+    msg.textContent = e.message;
+  }
+}
+
+async function portal() {
+  const k = localStorage.getItem(KEY_STORE);
+  try {
+    const r = await fetch('/billing/portal', {headers: {'X-API-Key': k}});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Portal unavailable');
+    window.location = d.url;
+  } catch (e) {
+    document.getElementById('action-msg').style.color = '#f87171';
+    document.getElementById('action-msg').textContent = e.message;
+  }
+}
+
+if (localStorage.getItem(KEY_STORE)) load();
+</script>
+</body></html>"""
+
+
+@router.get("/billing/dashboard", response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_page():
+    return DASHBOARD_PAGE
 
 
 @router.get("/billing/success", response_class=HTMLResponse, include_in_schema=False)

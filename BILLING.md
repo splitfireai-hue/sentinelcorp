@@ -1,6 +1,8 @@
-# SentinelCorp — Billing & Payments Setup
+# Sentinel Series — Billing & Payments Setup
 
-Turn on paid tiers via Razorpay (India UPI/cards) + Stripe (global cards).
+Turn on paid tiers via Razorpay (India UPI/cards) + Stripe (global cards) + x402 (USDC for agents). One API key works on both **SentinelCorp** and **SentinelX402**.
+
+> **Architecture**: SentinelCorp owns the issuance side — signup, checkout, webhooks, dashboard. SentinelX402 reuses the same `api_keys` and `usage_counters` tables (shared Postgres) to validate keys and track per-product usage. Each request to either service hits its own quota counter, but the underlying tier and limits come from one place.
 
 ## Tiers
 
@@ -13,15 +15,30 @@ Turn on paid tiers via Razorpay (India UPI/cards) + Stripe (global cards).
 
 Anonymous (no key): 100 req/day per IP — enough to try, not run on.
 
-## Turn billing on
+## Turn billing on (BOTH services share the same Postgres)
 
-Set in Railway → Variables:
+### On the SentinelCorp Railway service
 
 ```
 BILLING_ENABLED=true
+BILLING_PRODUCT=sentinelcorp
 ADMIN_SECRET=<long random string>
 PUBLIC_BASE_URL=https://sentinelcorp-production.up.railway.app
+DATABASE_URL=<reference Postgres service in Railway>
 ```
+
+### On the SentinelX402 Railway service
+
+Point at the **same** Postgres service (Railway → Variables → "+ New Variable" → "Reference" → pick the Postgres' `DATABASE_URL`):
+
+```
+BILLING_ENABLED=true
+BILLING_PRODUCT=sentinelx402
+PUBLIC_BASE_URL=https://sentinelx402-production.up.railway.app
+DATABASE_URL=<same Postgres reference as sentinelcorp>
+```
+
+You do **not** need to set `RAZORPAY_*` / `STRIPE_*` on SentinelX402 — checkout and webhooks only run on the SentinelCorp service. SentinelX402 just validates keys.
 
 Generate `ADMIN_SECRET` with `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`.
 
@@ -119,6 +136,60 @@ STRIPE_PRICE_STARTUP=price_YYYY
 - Test card: `4242 4242 4242 4242`, any future expiry, any CVV
 - After success, you'll be redirected back to `/billing/success`
 - Webhook fires; confirm with `/billing/me` that tier upgraded
+
+---
+
+---
+
+## x402 (per-call USDC for autonomous agents)
+
+x402 is the third payment rail. Subscriptions don't fit autonomous agents — an agent that runs once a week shouldn't sign up and remember a credential. x402 lets the agent pay USDC per call.
+
+### When to enable
+
+- You want self-driving agents to use the API without any human signup
+- You have a USDC wallet and want micropayments to flow there
+- Subscription customers are still served via API key — x402 is additive
+
+### 1. Get a wallet
+- Use any EVM wallet (Coinbase, MetaMask, Rabby) on **Base mainnet** (or Base Sepolia for test)
+- Copy the address — agents will pay USDC to this address
+
+### 2. Set Railway env vars
+
+```
+X402_ENABLED=true
+X402_WALLET_ADDRESS=0xYourWalletHere
+X402_NETWORK_ID=eip155:8453        # Base mainnet (or eip155:84532 for Sepolia)
+X402_FACILITATOR_URL=https://x402.org/facilitator
+# Per-call prices (defaults are conservative)
+X402_PRICE_VALIDATE=$0.005
+X402_PRICE_PROFILE=$0.01
+X402_PRICE_DEBARRED=$0.005
+X402_PRICE_BATCH=$0.10
+```
+
+### 3. Confirm
+
+After redeploy, hit a paid endpoint **without** an API key:
+
+```bash
+curl -i "https://YOUR_URL/api/v1/company/profile?identifier=Sahara+India"
+```
+
+You should get `HTTP/1.1 402 Payment Required` with a JSON body containing payment requirements (wallet, amount, scheme). An x402-aware agent will see this, sign a USDC payment with EIP-3009, and retry with the `X-PAYMENT` header.
+
+### How it interacts with API keys
+
+- Request has valid `X-API-Key` → billing logic runs (key tier, monthly quota). x402 is bypassed.
+- Request has no key + `X402_ENABLED=true` → x402 middleware demands payment.
+- Request has no key + `X402_ENABLED=false` → anonymous trial bucket (100/day per IP).
+
+### Caveats
+
+- The `x402[fastapi,evm]>=0.1.0` SDK requires Python 3.10+. Railway's container is 3.11 so this is fine.
+- The Dockerfile installs x402 as best-effort (`|| echo`) — if PyPI is unreachable at build time the image still ships, x402 just won't load. Toggle off and on for diagnostics.
+- Test mode: use `eip155:84532` (Base Sepolia) to avoid spending real USDC during dev.
 
 ---
 

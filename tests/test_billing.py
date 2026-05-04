@@ -283,6 +283,73 @@ async def test_razorpay_webhook_handles_activated(client, db, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_pricing_json_includes_x402_when_enabled(client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "X402_ENABLED", True)
+    monkeypatch.setattr(settings, "X402_WALLET_ADDRESS", "0xabc")
+    r = await client.get("/pricing.json")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["rails"]["x402"] is True
+    assert d["x402"] is not None
+    assert d["x402"]["wallet"] == "0xabc"
+    assert "validate" in d["x402"]["prices"]
+
+
+@pytest.mark.asyncio
+async def test_x402_setup_module_loads():
+    from app import x402_setup
+
+    assert hasattr(x402_setup, "create_x402_server")
+    assert hasattr(x402_setup, "get_routes_config")
+    assert hasattr(x402_setup, "is_available")
+    assert x402_setup.is_available() in (True, False)
+
+
+@pytest.mark.asyncio
+async def test_dashboard_page_renders(client):
+    r = await client.get("/billing/dashboard")
+    assert r.status_code == 200
+    assert "Billing dashboard" in r.text
+    assert "Sign in with API key" in r.text
+
+
+@pytest.mark.asyncio
+async def test_subscription_endpoint_returns_key_only_when_no_sub(client):
+    s = await client.post("/billing/signup", json={"email": "sub-test@e.com"})
+    key = s.json()["api_key"]
+    r = await client.get("/billing/subscription", headers={"X-API-Key": key})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["key"]["tier"] == "free"
+    assert d["subscription"] is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_returns_404_when_no_sub(client):
+    s = await client.post("/billing/signup", json={"email": "cancel-test@e.com"})
+    key = s.json()["api_key"]
+    r = await client.post("/billing/cancel", headers={"X-API-Key": key})
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_portal_rejects_for_razorpay(client, db):
+    from app.models.billing import Subscription
+    from app.services import auth as auth_svc
+
+    raw, key = await auth_svc.issue_key(db, email="rzp@e.com", tier="dev")
+    db.add(Subscription(
+        api_key_id=key.id, rail="razorpay", plan="dev",
+        external_subscription_id="sub_p_1", status="active",
+    ))
+    await db.commit()
+    r = await client.get("/billing/portal", headers={"X-API-Key": raw})
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_razorpay_webhook_handles_cancelled(client, db, monkeypatch):
     import hmac, hashlib, json as _json
 

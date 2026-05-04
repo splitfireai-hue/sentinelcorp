@@ -198,3 +198,20 @@ async def handle_webhook(session: AsyncSession, payload: dict) -> dict:
     sub.updated_at = now
     await session.commit()
     return {"ok": True, "event": event, "subscription_id": sub_id}
+
+
+async def cancel_subscription(session: AsyncSession, sub: Subscription) -> dict:
+    """Cancel an active Razorpay subscription. Razorpay charges through period end."""
+    if not _is_configured():
+        raise RuntimeError("Razorpay is not configured on this server")
+    client = _client()
+    try:
+        result = client.subscription.cancel(sub.external_subscription_id, {"cancel_at_cycle_end": 1})
+    except Exception as e:
+        logger.exception("Razorpay subscription.cancel failed for %s", sub.external_subscription_id)
+        raise RuntimeError("Failed to cancel: {}".format(e))
+    sub.cancel_at_period_end = True
+    sub.status = result.get("status", "cancelled")
+    sub.updated_at = datetime.utcnow()
+    await session.commit()
+    return {"ok": True, "status": sub.status, "cancel_at_period_end": True}
