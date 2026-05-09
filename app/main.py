@@ -35,10 +35,14 @@ async def _migrate_api_keys_if_needed(conn) -> None:
 
     needs_drop = await conn.run_sync(_inspect)
     if needs_drop:
-        logger.warning("Dropping legacy api_keys table to apply new billing schema")
+        logger.warning("Dropping legacy api_keys + dependent billing tables to apply new schema")
         from sqlalchemy import text
 
-        await conn.execute(text("DROP TABLE IF EXISTS api_keys"))
+        # CASCADE so FK constraints from any subscriptions / usage tables that may
+        # have been created on a half-completed prior boot get cleaned up. Safe at
+        # this stage because no paid subscriptions exist yet — first-time deploy.
+        for table in ("subscriptions", "usage_counters", "anon_usage_counters", "api_keys"):
+            await conn.execute(text("DROP TABLE IF EXISTS {} CASCADE".format(table)))
 
 
 @asynccontextmanager
