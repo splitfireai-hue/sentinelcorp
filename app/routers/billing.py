@@ -914,6 +914,360 @@ async def dashboard_page():
     return DASHBOARD_PAGE
 
 
+ADMIN_DASHBOARD_PAGE = """<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin Dashboard — SentinelCorp</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e0e0e0;min-height:100vh;padding:24px 16px}
+.wrap{max-width:1200px;margin:0 auto}
+h1{font-size:26px;font-weight:700;margin-bottom:4px;background:linear-gradient(135deg,#f87171,#f59e0b);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.subtitle{color:#555;font-size:13px;margin-bottom:24px}
+#login{max-width:440px;margin:80px auto;background:#161616;border:1px solid #222;border-radius:12px;padding:32px}
+#login h2{font-size:22px;margin-bottom:8px}
+#login p{color:#666;font-size:13px;margin-bottom:16px}
+#login input{width:100%;padding:11px;background:#0d0d0d;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px;font-family:'SF Mono',Monaco,monospace;margin-bottom:12px}
+#main{display:none}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px}
+.stat{background:#161616;border:1px solid #222;border-radius:10px;padding:16px}
+.stat .num{font-size:28px;font-weight:700;color:#4ade80}
+.stat .label{font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-top:4px}
+.stat .num.warn{color:#f59e0b}
+.stat .num.blue{color:#60a5fa}
+.stat .num.purple{color:#a78bfa}
+.stat .num.red{color:#f87171}
+section{margin-bottom:28px}
+section h2{font-size:15px;font-weight:600;color:#888;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px}
+table{width:100%;border-collapse:collapse;background:#111;border-radius:8px;overflow:hidden;font-size:13px}
+th{text-align:left;padding:10px 12px;color:#555;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid #1a1a1a;background:#0d0d0d}
+td{padding:10px 12px;border-bottom:1px solid #141414;vertical-align:middle}
+tr:last-child td{border:none}
+tr:hover td{background:#161616}
+.tag{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;text-transform:uppercase;letter-spacing:0.4px;font-weight:600}
+.tag-free{background:#1a2a3d;color:#60a5fa}
+.tag-dev{background:#1a3d2a;color:#34d399}
+.tag-startup{background:#3d2a1a;color:#f59e0b}
+.tag-enterprise{background:#3d1a3d;color:#e879f9}
+.tag-active{background:#1a3d1a;color:#4ade80}
+.tag-revoked{background:#3d1a1a;color:#f87171}
+.tag-pending{background:#3d2f1a;color:#f59e0b}
+.tag-cancelled{background:#2a1a1a;color:#888}
+.bar-wrap{height:6px;background:#1a1a1a;border-radius:3px;width:100px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:6px}
+.bar{height:100%;background:#3b82f6;border-radius:3px}
+.bar.warn{background:#f59e0b}
+.bar.crit{background:#ef4444}
+.mono{font-family:'SF Mono',Monaco,monospace;font-size:12px;color:#888}
+button.btn{padding:8px 16px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:600}
+.btn-primary{background:#3b82f6;color:#fff}
+.btn-sm{padding:5px 10px;font-size:11px;border-radius:4px;border:none;cursor:pointer;font-weight:600}
+.btn-danger-sm{background:#2a0e0e;color:#f87171;border:1px solid #5c1a1a}
+.btn-upgrade-sm{background:#1a2a3d;color:#60a5fa;border:1px solid #1a3d5c}
+.actions-row{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-bottom:16px}
+.search{background:#111;border:1px solid #222;border-radius:6px;padding:8px 12px;color:#e0e0e0;font-size:13px;width:240px}
+.search:focus{outline:none;border-color:#3b82f6}
+#toast{position:fixed;bottom:24px;right:24px;background:#161616;border:1px solid #333;border-radius:8px;padding:12px 20px;font-size:13px;display:none;z-index:1000}
+#toast.show{display:block}
+#toast.ok{border-color:#1f3d1f;color:#4ade80}
+#toast.err{border-color:#5c1a1a;color:#f87171}
+.err-msg{color:#f87171;font-size:12px;margin-top:8px}
+.empty{text-align:center;padding:32px;color:#444;font-size:13px}
+.product-badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;background:#1a1a2a;color:#6b7280;margin-left:4px}
+</style></head><body>
+<div class="wrap">
+
+<div id="login">
+<h2 style="background:linear-gradient(135deg,#f87171,#f59e0b);-webkit-background-clip:text;-webkit-text-fill-color:transparent">Admin Dashboard</h2>
+<p>Enter your ADMIN_SECRET to continue. This is the secret set in your Railway environment.</p>
+<input id="secret-input" type="password" placeholder="Admin secret..." autocomplete="off">
+<button class="btn btn-primary" onclick="doLogin()" style="width:100%">Sign In</button>
+<div id="login-err" class="err-msg"></div>
+</div>
+
+<div id="main">
+<h1>Admin Dashboard</h1>
+<p class="subtitle">SentinelCorp — API usage, customers, and subscriptions</p>
+
+<div class="stats" id="stats-grid"></div>
+
+<section>
+<div class="actions-row">
+<input class="search" id="search" placeholder="Filter by email..." oninput="filterTable()">
+<button class="btn btn-primary" onclick="reload()">Refresh</button>
+</div>
+<h2>API Keys & Customer Usage</h2>
+<table>
+<thead><tr>
+<th>#</th>
+<th>Email</th>
+<th>Key</th>
+<th>Tier</th>
+<th>Status</th>
+<th>SentinelCorp usage</th>
+<th>SentinelX402 usage</th>
+<th>Quota</th>
+<th>Joined</th>
+<th>Last used</th>
+<th></th>
+</tr></thead>
+<tbody id="keys-tbody"></tbody>
+</table>
+</section>
+
+<section>
+<h2>Active Subscriptions</h2>
+<table>
+<thead><tr>
+<th>Email</th>
+<th>Plan</th>
+<th>Rail</th>
+<th>Amount</th>
+<th>Status</th>
+<th>Period ends</th>
+</tr></thead>
+<tbody id="subs-tbody"></tbody>
+</table>
+</section>
+</div>
+
+<div id="toast"></div>
+</div>
+
+<script>
+const STORE = 'sc_admin_secret';
+let allKeys = [];
+
+function doLogin() {
+  const s = document.getElementById('secret-input').value.trim();
+  if (!s) return;
+  sessionStorage.setItem(STORE, s);
+  load();
+}
+
+function secret() { return sessionStorage.getItem(STORE) || ''; }
+
+function toast(msg, ok) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show ' + (ok ? 'ok' : 'err');
+  setTimeout(() => t.className = '', 2800);
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-IN', {day:'numeric',month:'short',year:'2-digit'});
+}
+
+function fmtAmount(currency, minor) {
+  if (!minor) return 'Free';
+  const major = (minor/100).toFixed(0);
+  return (currency === 'INR' ? '₹' : '$') + major + '/mo';
+}
+
+function barHtml(used, quota) {
+  const pct = Math.min(100, quota > 0 ? (used/quota)*100 : 0);
+  const cls = pct >= 90 ? 'crit' : pct >= 70 ? 'warn' : '';
+  return '<span class="bar-wrap"><span class="bar ' + cls + '" style="width:' + pct.toFixed(1) + '%"></span></span>' +
+    '<span style="font-size:12px;color:#666">' + used.toLocaleString() + '</span>';
+}
+
+function renderStats(data) {
+  const byTier = {};
+  for (const k of data.keys) { byTier[k.tier] = (byTier[k.tier]||0) + 1; }
+  const activeCount = data.keys.filter(k => k.status === 'active').length;
+  const totalCorp = data.keys.reduce((s,k) => s + (k.usage_sentinelcorp||0), 0);
+  const totalX402 = data.keys.reduce((s,k) => s + (k.usage_sentinelx402||0), 0);
+  const subsActive = (data.subscriptions||[]).filter(s => s.status === 'active').length;
+
+  const stats = [
+    {label:'Total Keys', num: data.keys.length, cls:''},
+    {label:'Active Keys', num: activeCount, cls:''},
+    {label:'Free tier', num: byTier.free||0, cls:'blue'},
+    {label:'Dev tier', num: byTier.dev||0, cls:''},
+    {label:'Startup tier', num: byTier.startup||0, cls:'warn'},
+    {label:'Enterprise', num: byTier.enterprise||0, cls:'purple'},
+    {label:'Corp requests (mo)', num: totalCorp.toLocaleString(), cls:''},
+    {label:'X402 requests (mo)', num: totalX402.toLocaleString(), cls:''},
+    {label:'Active subscriptions', num: subsActive, cls: subsActive > 0 ? 'purple' : ''},
+  ];
+  document.getElementById('stats-grid').innerHTML = stats.map(s =>
+    '<div class="stat"><div class="num ' + s.cls + '">' + s.num + '</div><div class="label">' + s.label + '</div></div>'
+  ).join('');
+}
+
+function renderKeys(keys) {
+  const tbody = document.getElementById('keys-tbody');
+  if (!keys.length) { tbody.innerHTML = '<tr><td colspan="11" class="empty">No keys found</td></tr>'; return; }
+  tbody.innerHTML = keys.map(k =>
+    '<tr>' +
+    '<td style="color:#444">' + k.id + '</td>' +
+    '<td>' + k.email + (k.name ? '<div style="font-size:11px;color:#555">' + k.name + '</div>' : '') + '</td>' +
+    '<td class="mono">' + k.key_prefix + '...' + k.key_last4 + '</td>' +
+    '<td><span class="tag tag-' + k.tier + '">' + k.tier + '</span></td>' +
+    '<td><span class="tag tag-' + k.status + '">' + k.status + '</span></td>' +
+    '<td>' + barHtml(k.usage_sentinelcorp||0, k.monthly_quota) + '</td>' +
+    '<td>' + barHtml(k.usage_sentinelx402||0, k.monthly_quota) + '</td>' +
+    '<td style="font-size:12px;color:#666">' + (k.monthly_quota||0).toLocaleString() + '/mo</td>' +
+    '<td style="font-size:12px;color:#666">' + fmtDate(k.created_at) + '</td>' +
+    '<td style="font-size:12px;color:#666">' + (k.last_used_at ? fmtDate(k.last_used_at) : '<span style="color:#333">never</span>') + '</td>' +
+    '<td><div style="display:flex;gap:4px">' +
+    (k.status === 'active' ? '<button class="btn-sm btn-upgrade-sm" onclick="upgradeTier(' + k.id + ',\\''+k.tier+'\\')">Tier</button>' : '') +
+    (k.status === 'active' ? '<button class="btn-sm btn-danger-sm" onclick="revokeKey(' + k.id + ')">Revoke</button>' : '') +
+    '</div></td>' +
+    '</tr>'
+  ).join('');
+}
+
+function renderSubs(subs) {
+  const tbody = document.getElementById('subs-tbody');
+  if (!subs || !subs.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">No subscriptions yet</td></tr>'; return; }
+  tbody.innerHTML = subs.map(s =>
+    '<tr>' +
+    '<td>' + s.email + '</td>' +
+    '<td>' + s.plan + '</td>' +
+    '<td>' + s.rail + '</td>' +
+    '<td>' + fmtAmount(s.currency, s.amount_minor) + '</td>' +
+    '<td><span class="tag tag-' + s.status + '">' + s.status + '</span></td>' +
+    '<td style="font-size:12px;color:#666">' + fmtDate(s.current_period_end) + '</td>' +
+    '</tr>'
+  ).join('');
+}
+
+function filterTable() {
+  const q = document.getElementById('search').value.toLowerCase();
+  const filtered = q ? allKeys.filter(k => k.email.toLowerCase().includes(q) || (k.name||'').toLowerCase().includes(q)) : allKeys;
+  renderKeys(filtered);
+}
+
+async function load() {
+  const s = secret();
+  if (!s) return;
+  try {
+    const r = await fetch('/billing/admin/stats', {headers: {'X-Admin-Secret': s}});
+    if (r.status === 403 || r.status === 401) {
+      document.getElementById('login-err').textContent = 'Invalid admin secret';
+      sessionStorage.removeItem(STORE);
+      return;
+    }
+    const data = await r.json();
+    allKeys = data.keys || [];
+    document.getElementById('login').style.display = 'none';
+    document.getElementById('main').style.display = 'block';
+    renderStats(data);
+    renderKeys(allKeys);
+    renderSubs(data.subscriptions || []);
+  } catch (e) {
+    document.getElementById('login-err').textContent = 'Load failed: ' + e.message;
+  }
+}
+
+function reload() { load(); toast('Refreshed', true); }
+
+const TIERS = ['free', 'dev', 'startup', 'enterprise'];
+
+async function upgradeTier(keyId, currentTier) {
+  const idx = TIERS.indexOf(currentTier);
+  const next = TIERS[(idx + 1) % TIERS.length];
+  const choice = prompt('Set tier for key #' + keyId + ' (current: ' + currentTier + '):\\n' + TIERS.join(' / '), next);
+  if (!choice || !TIERS.includes(choice)) return;
+  const r = await fetch('/billing/admin/keys/' + keyId + '/tier', {
+    method: 'PATCH',
+    headers: {'X-Admin-Secret': secret(), 'Content-Type': 'application/json'},
+    body: JSON.stringify({tier: choice}),
+  });
+  if (r.ok) { toast('Tier updated to ' + choice, true); load(); }
+  else { const d = await r.json(); toast(d.detail || 'Failed', false); }
+}
+
+async function revokeKey(keyId) {
+  if (!confirm('Revoke key #' + keyId + '? The customer will immediately lose access.')) return;
+  const r = await fetch('/billing/admin/keys/' + keyId, {
+    method: 'DELETE',
+    headers: {'X-Admin-Secret': secret()},
+  });
+  if (r.ok) { toast('Key #' + keyId + ' revoked', true); load(); }
+  else { const d = await r.json(); toast(d.detail || 'Revoke failed', false); }
+}
+
+if (sessionStorage.getItem(STORE)) load();
+</script>
+</body></html>"""
+
+
+@router.get("/billing/admin/dashboard", response_class=HTMLResponse, include_in_schema=False)
+async def admin_dashboard_page():
+    """Admin dashboard UI — auth handled client-side via X-Admin-Secret."""
+    return ADMIN_DASHBOARD_PAGE
+
+
+@router.get("/billing/admin/stats", dependencies=[Depends(_require_admin)])
+async def admin_stats(session: AsyncSession = Depends(get_db)):
+    """Return all API keys with their current-month usage across both products, plus subscriptions."""
+    from datetime import datetime
+
+    from sqlalchemy import func, select
+
+    from app.models.billing import APIKey, Subscription, UsageCounter
+
+    year_month = datetime.utcnow().strftime("%Y-%m")
+
+    # All keys
+    keys_result = await session.execute(select(APIKey).order_by(APIKey.created_at.desc()))
+    keys = keys_result.scalars().all()
+
+    # Usage counters for this month, keyed by (api_key_id, product)
+    usage_result = await session.execute(
+        select(UsageCounter).where(UsageCounter.year_month == year_month)
+    )
+    usage_by_key_product: dict[tuple, int] = {}
+    for uc in usage_result.scalars().all():
+        usage_by_key_product[(uc.api_key_id, uc.product)] = uc.count
+
+    # Subscriptions with email join
+    subs_result = await session.execute(
+        select(Subscription, APIKey.email)
+        .join(APIKey, Subscription.api_key_id == APIKey.id)
+        .order_by(Subscription.created_at.desc())
+    )
+    subs = []
+    for sub, email in subs_result.all():
+        subs.append({
+            "id": sub.id,
+            "email": email,
+            "rail": sub.rail,
+            "plan": sub.plan,
+            "status": sub.status,
+            "currency": sub.currency,
+            "amount_minor": sub.amount_minor,
+            "current_period_end": sub.current_period_end.isoformat() if sub.current_period_end else None,
+        })
+
+    keys_out = []
+    for k in keys:
+        keys_out.append({
+            "id": k.id,
+            "email": k.email,
+            "name": k.name,
+            "key_prefix": k.key_prefix,
+            "key_last4": k.key_last4,
+            "tier": k.tier,
+            "status": k.status,
+            "monthly_quota": k.monthly_quota,
+            "rate_limit_per_min": k.rate_limit_per_min,
+            "usage_sentinelcorp": usage_by_key_product.get((k.id, "sentinelcorp"), 0),
+            "usage_sentinelx402": usage_by_key_product.get((k.id, "sentinelx402"), 0),
+            "created_at": k.created_at.isoformat() if k.created_at else None,
+            "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
+            "notes": k.notes,
+        })
+
+    return {
+        "year_month": year_month,
+        "keys": keys_out,
+        "subscriptions": subs,
+    }
+
+
 @router.get("/billing/success", response_class=HTMLResponse, include_in_schema=False)
 async def billing_success(session_id: str = ""):
     return """<!DOCTYPE html>
