@@ -83,7 +83,8 @@ async def create_checkout(
         raise ValueError("No Razorpay plan configured for tier '{}'".format(tier))
 
     raw_key, key_row = await auth_service.issue_key(
-        session, email=email, name=name, tier="free", notes="Pending razorpay sub for tier=" + tier
+        session, email=email, name=name, tier="free", status="pending",
+        notes="Pending razorpay sub for tier=" + tier
     )
 
     client = _client()
@@ -152,6 +153,21 @@ async def handle_webhook(session: AsyncSession, payload: dict) -> dict:
 
     if not sub_id:
         return {"ok": False, "reason": "no subscription id in payload"}
+
+    # Replay protection: each Razorpay event has an `id` plus a `created_at`
+    # timestamp. Combine sub_id+event+timestamp to dedupe — the same event
+    # cannot be processed twice (would otherwise let an attacker replay
+    # `subscription.cancelled` to downgrade an active customer).
+    event_id = "{}:{}:{}".format(sub_id, event, sub_payload.get("created_at") or payload.get("created_at") or "")
+    from app.models.billing import ProcessedWebhook
+    from sqlalchemy.exc import IntegrityError
+    session.add(ProcessedWebhook(rail="razorpay", event_id=event_id))
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        logger.info("Razorpay: duplicate webhook ignored event=%s sub=%s", event, sub_id)
+        return {"ok": True, "duplicate": True}
 
     result = await session.execute(
         select(Subscription).where(Subscription.external_subscription_id == sub_id)

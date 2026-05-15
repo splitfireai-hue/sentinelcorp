@@ -24,14 +24,18 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 def _client_id_from_request(request: Request) -> str:
-    """Extract client identifier — API key or IP."""
+    """Extract client identifier — API key or real client IP."""
     api_key = request.headers.get("x-api-key", "")
     if api_key:
         return "key:{}".format(api_key[:12])
     client_ip = request.client.host if request.client else "unknown"
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        client_ip = forwarded.split(",")[0].strip()
+    hops = settings.TRUSTED_PROXY_HOPS
+    if hops > 0:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+            if len(parts) >= hops:
+                client_ip = parts[-hops]
     return "ip:{}".format(client_ip)
 
 

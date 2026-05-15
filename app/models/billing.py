@@ -73,6 +73,22 @@ class UsageCounter(Base):
     )
 
 
+class ProcessedWebhook(Base):
+    """Idempotency log for inbound payment webhooks. Prevents replay attacks
+    where the same valid event is posted twice to grant double-upgrades or
+    overwrite period-end dates with stale values."""
+    __tablename__ = "processed_webhooks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    rail: Mapped[str] = mapped_column(String(32))  # razorpay | stripe
+    event_id: Mapped[str] = mapped_column(String(200))
+    processed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("rail", "event_id", name="uq_webhook_rail_event"),
+    )
+
+
 class AnonUsageCounter(Base):
     """Per-IP daily counter for unauthenticated free-trial traffic."""
     __tablename__ = "anon_usage_counters"

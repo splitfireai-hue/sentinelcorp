@@ -58,7 +58,10 @@ def hash_key(raw_key: str) -> str:
 
 
 def hash_ip(ip: str) -> str:
-    salt = settings.ADMIN_SECRET or "sentinelcorp"
+    # Dedicated salt: rotating ADMIN_SECRET shouldn't reset anon counters,
+    # and the salt being equal to the admin secret leaks entropy if the
+    # anon table is dumped.
+    salt = settings.ANON_IP_SALT or settings.ADMIN_SECRET or "sentinelcorp"
     return hashlib.sha256("{}:{}".format(salt, ip).encode("utf-8")).hexdigest()
 
 
@@ -75,6 +78,7 @@ async def issue_key(
     tier: str = "free",
     notes: Optional[str] = None,
     test: bool = False,
+    status: str = "active",
 ) -> tuple[str, APIKey]:
     if tier not in TIERS:
         raise ValueError("Unknown tier: {}".format(tier))
@@ -87,7 +91,7 @@ async def issue_key(
         name=name.strip()[:200],
         email=email.strip().lower()[:200],
         tier=tier,
-        status="active",
+        status=status,
         monthly_quota=cfg.monthly_quota,
         rate_limit_per_min=cfg.rate_limit_per_min,
         notes=notes,
@@ -131,9 +135,15 @@ async def get_monthly_count(
     return int(row or 0)
 
 
-async def increment_usage(
+async def increment_usage_and_get_count(
     session: AsyncSession, api_key_id: int, product: str = "sentinelcorp"
-) -> None:
+) -> int:
+    """Atomically increment the usage counter and return the new count.
+
+    Using a single upsert+RETURNING avoids the check-then-act race where two
+    concurrent requests both read the same count, both pass the quota check,
+    and both get served even though only one slot remained.
+    """
     ym = current_year_month()
     values = {
         "api_key_id": api_key_id,
@@ -146,16 +156,25 @@ async def increment_usage(
         values,
         ["api_key_id", "product", "year_month"],
         {"count": UsageCounter.__table__.c.count + 1},
-    )
+    ).returning(UsageCounter.__table__.c.count)
     try:
-        await session.execute(stmt)
+        result = await session.execute(stmt)
+        new_count = result.scalar_one_or_none() or 1
         await session.execute(
             update(APIKey).where(APIKey.id == api_key_id).values(last_used_at=datetime.utcnow())
         )
         await session.commit()
+        return new_count
     except Exception:
         logger.exception("increment_usage failed for key_id=%s", api_key_id)
         await session.rollback()
+        return 0
+
+
+async def increment_usage(
+    session: AsyncSession, api_key_id: int, product: str = "sentinelcorp"
+) -> None:
+    await increment_usage_and_get_count(session, api_key_id, product)
 
 
 async def anon_count_and_increment(session: AsyncSession, ip: str) -> int:
@@ -199,9 +218,10 @@ async def set_tier(session: AsyncSession, api_key_id: int, tier: str) -> bool:
     if tier not in TIERS:
         raise ValueError("Unknown tier: {}".format(tier))
     cfg = TIERS[tier]
+    # Never reactivate a revoked key — only update tier/quota on active/pending keys.
     stmt = (
         update(APIKey)
-        .where(APIKey.id == api_key_id)
+        .where(APIKey.id == api_key_id, APIKey.status != "revoked")
         .values(
             tier=tier,
             monthly_quota=cfg.monthly_quota,

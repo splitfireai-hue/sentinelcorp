@@ -75,7 +75,8 @@ async def create_checkout(
         raise ValueError("No Stripe price configured for tier '{}'".format(tier))
 
     raw_key, key_row = await auth_service.issue_key(
-        session, email=email, name=name, tier="free", notes="Pending stripe sub for tier=" + tier
+        session, email=email, name=name, tier="free", status="pending",
+        notes="Pending stripe sub for tier=" + tier
     )
 
     _configure()
@@ -155,25 +156,42 @@ async def _find_sub_by_external_id(
 async def handle_event(session: AsyncSession, event) -> dict:
     etype = event.get("type") if isinstance(event, dict) else event["type"]
     data = event["data"]["object"] if isinstance(event, dict) else event["data"]["object"]
+    event_id = event.get("id") if isinstance(event, dict) else event.get("id", "")
+
+    # Replay protection — Stripe events have a stable `id`. Reject duplicates
+    # so a stolen / replayed valid event can't repeatedly upgrade tiers or
+    # overwrite period_end with stale values.
+    if event_id:
+        from app.models.billing import ProcessedWebhook
+        from sqlalchemy.exc import IntegrityError
+        session.add(ProcessedWebhook(rail="stripe", event_id=event_id))
+        try:
+            await session.flush()
+        except IntegrityError:
+            await session.rollback()
+            logger.info("Stripe: duplicate event ignored id=%s type=%s", event_id, etype)
+            return {"ok": True, "duplicate": True}
 
     if etype == "checkout.session.completed":
         session_id = data.get("id")
         sub_id = data.get("subscription")
-        meta = data.get("metadata") or {}
-        pending_tier = meta.get("pending_tier", "dev")
-        api_key_id = int(meta.get("api_key_id") or 0)
 
         existing = await _find_sub_by_external_id(session, session_id)
         if existing is None:
             logger.warning("Stripe checkout.completed for unknown session=%s", session_id)
             return {"ok": False, "reason": "unknown session"}
+        # Resolve api_key_id and tier from the persisted Subscription row, NOT
+        # from webhook metadata. A forged/spoofed webhook could otherwise
+        # upgrade an arbitrary key to enterprise.
+        api_key_id = existing.api_key_id
+        pending_tier = existing.plan or "free"
+
         if sub_id:
             existing.external_subscription_id = sub_id
         existing.status = "active"
         existing.external_customer_id = data.get("customer")
         existing.updated_at = datetime.utcnow()
-        if api_key_id:
-            await auth_service.set_tier(session, api_key_id, pending_tier)
+        await auth_service.set_tier(session, api_key_id, pending_tier)
         await session.commit()
         logger.info("Stripe: checkout complete key_id=%s tier=%s sub=%s", api_key_id, pending_tier, sub_id)
         return {"ok": True, "event": etype}

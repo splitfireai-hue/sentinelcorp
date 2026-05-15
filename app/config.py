@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     # Admin
     ADMIN_SECRET: str = ""
 
+    # Number of trusted reverse proxies in front of the app. Railway / Cloudflare
+    # = 1. Anything > 0 enables X-Forwarded-For parsing (rightmost-N approach).
+    # Setting to 0 ignores XFF entirely (use only request.client.host).
+    TRUSTED_PROXY_HOPS: int = 1
+    # Dedicated salt for hashing client IPs in anon usage counters. Falls back
+    # to ADMIN_SECRET if unset, but a dedicated salt is recommended so admin
+    # secret rotations don't reset all anon counters.
+    ANON_IP_SALT: str = ""
+
     # Billing
     BILLING_ENABLED: bool = False
     BILLING_PRODUCT: str = "sentinelcorp"

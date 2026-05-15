@@ -20,37 +20,11 @@ from app.routers import billing, company, debarred, health, validate
 logger = logging.getLogger(__name__)
 
 
-async def _migrate_api_keys_if_needed(conn) -> None:
-    """One-shot migration: the legacy api_keys table stored raw keys. Drop it if present
-    so the new billing schema can be created. Safe because the legacy table was never
-    written to in any deployed version."""
-    from sqlalchemy import inspect
-
-    def _inspect(sync_conn):
-        insp = inspect(sync_conn)
-        if not insp.has_table("api_keys"):
-            return False
-        cols = {c["name"] for c in insp.get_columns("api_keys")}
-        return "key_hash" not in cols
-
-    needs_drop = await conn.run_sync(_inspect)
-    if needs_drop:
-        logger.warning("Dropping legacy api_keys + dependent billing tables to apply new schema")
-        from sqlalchemy import text
-
-        # CASCADE so FK constraints from any subscriptions / usage tables that may
-        # have been created on a half-completed prior boot get cleaned up. Safe at
-        # this stage because no paid subscriptions exist yet — first-time deploy.
-        for table in ("subscriptions", "usage_counters", "anon_usage_counters", "api_keys"):
-            await conn.execute(text("DROP TABLE IF EXISTS {} CASCADE".format(table)))
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
     logger.info("Starting SentinelCorp (env=%s)", settings.ENVIRONMENT)
     async with engine.begin() as conn:
-        await _migrate_api_keys_if_needed(conn)
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables ready")
     yield
@@ -125,8 +99,19 @@ async def security_headers_middleware(request: Request, call_next):
         )
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # CSP blocks future XSS from exfiltrating admin secret in sessionStorage.
+    # 'unsafe-inline' allowed for the existing inline <script>/<style> blocks.
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://checkout.razorpay.com; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self' https://api.razorpay.com; "
+        "frame-src https://checkout.razorpay.com https://api.razorpay.com; "
+        "form-action 'self' https://checkout.stripe.com; "
+        "base-uri 'self'; frame-ancestors 'none'"
+    )
     duration_ms = (time.time() - start) * 1000
     logger.info("%s %s %d %.1fms", request.method, request.url.path, response.status_code, duration_ms)
     return response

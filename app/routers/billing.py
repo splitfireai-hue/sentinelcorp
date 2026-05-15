@@ -7,7 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -25,6 +25,13 @@ class IssueKeyRequest(BaseModel):
     name: str = Field(default="", max_length=200)
     tier: str = Field(default="free")
     notes: Optional[str] = Field(default=None, max_length=1000)
+
+    @field_validator("name", "notes")
+    @classmethod
+    def _no_html(cls, v):
+        if v and any(c in v for c in "<>"):
+            raise ValueError("must not contain '<' or '>'")
+        return v
 
 
 class IssueKeyResponse(BaseModel):
@@ -80,6 +87,8 @@ async def _require_key(
     api_key = await auth_service.lookup_key(session, raw)
     if api_key is None:
         raise HTTPException(status_code=401, detail="Invalid API key")
+    if api_key.status == "revoked":
+        raise HTTPException(status_code=403, detail="API key has been revoked")
     return api_key
 
 
@@ -231,7 +240,7 @@ async function doPay() {
         description: selectedTier.charAt(0).toUpperCase() + selectedTier.slice(1) + ' tier',
         prefill: {email, name},
         theme: {color: '#3b82f6'},
-        handler: function() { window.location = '/billing/success?api_key=' + encodeURIComponent(d.api_key); },
+        handler: function() { window.location = '/billing/success'; },
       };
       new Razorpay(opts).open();
       closeModal();
@@ -480,6 +489,13 @@ class CheckoutRequest(BaseModel):
     email: EmailStr
     tier: str = Field(..., description="dev or startup")
     name: str = Field(default="", max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def _no_html(cls, v):
+        if v and any(c in v for c in "<>"):
+            raise ValueError("must not contain '<' or '>'")
+        return v
 
 
 class RazorpayCheckoutResponse(BaseModel):
@@ -1090,47 +1106,97 @@ function renderStats(data) {
     {label:'X402 requests (mo)', num: totalX402.toLocaleString(), cls:''},
     {label:'Active subscriptions', num: subsActive, cls: subsActive > 0 ? 'purple' : ''},
   ];
-  document.getElementById('stats-grid').innerHTML = stats.map(s =>
-    '<div class="stat"><div class="num ' + s.cls + '">' + s.num + '</div><div class="label">' + s.label + '</div></div>'
-  ).join('');
+  const grid = document.getElementById('stats-grid');
+  grid.replaceChildren();
+  for (const s of stats) {
+    const card = el('div', {cls: 'stat'});
+    card.appendChild(el('div', {text: String(s.num), cls: 'num ' + s.cls}));
+    card.appendChild(el('div', {text: s.label, cls: 'label'}));
+    grid.appendChild(card);
+  }
+}
+
+// Build a DOM element instead of innerHTML concatenation — values are never
+// interpreted as HTML, blocking stored XSS via attacker-supplied email/name.
+function el(tag, opts) {
+  const e = document.createElement(tag);
+  if (opts) {
+    if (opts.text != null) e.textContent = opts.text;
+    if (opts.cls) e.className = opts.cls;
+    if (opts.style) e.setAttribute('style', opts.style);
+    if (opts.html) e.innerHTML = opts.html;  // ONLY for trusted static markup (icons/bars)
+  }
+  return e;
 }
 
 function renderKeys(keys) {
   const tbody = document.getElementById('keys-tbody');
-  if (!keys.length) { tbody.innerHTML = '<tr><td colspan="11" class="empty">No keys found</td></tr>'; return; }
-  tbody.innerHTML = keys.map(k =>
-    '<tr>' +
-    '<td style="color:#444">' + k.id + '</td>' +
-    '<td>' + k.email + (k.name ? '<div style="font-size:11px;color:#555">' + k.name + '</div>' : '') + '</td>' +
-    '<td class="mono">' + k.key_prefix + '...' + k.key_last4 + '</td>' +
-    '<td><span class="tag tag-' + k.tier + '">' + k.tier + '</span></td>' +
-    '<td><span class="tag tag-' + k.status + '">' + k.status + '</span></td>' +
-    '<td>' + barHtml(k.usage_sentinelcorp||0, k.monthly_quota) + '</td>' +
-    '<td>' + barHtml(k.usage_sentinelx402||0, k.monthly_quota) + '</td>' +
-    '<td style="font-size:12px;color:#666">' + (k.monthly_quota||0).toLocaleString() + '/mo</td>' +
-    '<td style="font-size:12px;color:#666">' + fmtDate(k.created_at) + '</td>' +
-    '<td style="font-size:12px;color:#666">' + (k.last_used_at ? fmtDate(k.last_used_at) : '<span style="color:#333">never</span>') + '</td>' +
-    '<td><div style="display:flex;gap:4px">' +
-    (k.status === 'active' ? '<button class="btn-sm btn-upgrade-sm" onclick="upgradeTier(' + k.id + ',\\''+k.tier+'\\')">Tier</button>' : '') +
-    (k.status === 'active' ? '<button class="btn-sm btn-danger-sm" onclick="revokeKey(' + k.id + ')">Revoke</button>' : '') +
-    '</div></td>' +
-    '</tr>'
-  ).join('');
+  tbody.replaceChildren();
+  if (!keys.length) {
+    const tr = el('tr');
+    tr.appendChild(el('td', {text: 'No keys found', cls: 'empty'}));
+    tr.firstChild.colSpan = 11;
+    tbody.appendChild(tr);
+    return;
+  }
+  for (const k of keys) {
+    const tr = el('tr');
+    tr.appendChild(el('td', {text: String(k.id), style: 'color:#444'}));
+    const emailTd = el('td', {text: k.email});
+    if (k.name) emailTd.appendChild(el('div', {text: k.name, style: 'font-size:11px;color:#555'}));
+    tr.appendChild(emailTd);
+    tr.appendChild(el('td', {text: k.key_prefix + '...' + k.key_last4, cls: 'mono'}));
+    const tierTd = el('td');
+    tierTd.appendChild(el('span', {text: k.tier, cls: 'tag tag-' + k.tier}));
+    tr.appendChild(tierTd);
+    const statusTd = el('td');
+    statusTd.appendChild(el('span', {text: k.status, cls: 'tag tag-' + k.status}));
+    tr.appendChild(statusTd);
+    tr.appendChild(el('td', {html: barHtml(k.usage_sentinelcorp||0, k.monthly_quota)}));
+    tr.appendChild(el('td', {html: barHtml(k.usage_sentinelx402||0, k.monthly_quota)}));
+    tr.appendChild(el('td', {text: (k.monthly_quota||0).toLocaleString() + '/mo', style: 'font-size:12px;color:#666'}));
+    tr.appendChild(el('td', {text: fmtDate(k.created_at), style: 'font-size:12px;color:#666'}));
+    tr.appendChild(el('td', {text: k.last_used_at ? fmtDate(k.last_used_at) : 'never', style: 'font-size:12px;color:#666'}));
+
+    const actionsTd = el('td');
+    const actionsDiv = el('div', {style: 'display:flex;gap:4px'});
+    if (k.status === 'active') {
+      const tierBtn = el('button', {text: 'Tier', cls: 'btn-sm btn-upgrade-sm'});
+      tierBtn.addEventListener('click', () => upgradeTier(k.id, k.tier));
+      actionsDiv.appendChild(tierBtn);
+      const revokeBtn = el('button', {text: 'Revoke', cls: 'btn-sm btn-danger-sm'});
+      revokeBtn.addEventListener('click', () => revokeKey(k.id));
+      actionsDiv.appendChild(revokeBtn);
+    }
+    actionsTd.appendChild(actionsDiv);
+    tr.appendChild(actionsTd);
+    tbody.appendChild(tr);
+  }
 }
 
 function renderSubs(subs) {
   const tbody = document.getElementById('subs-tbody');
-  if (!subs || !subs.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">No subscriptions yet</td></tr>'; return; }
-  tbody.innerHTML = subs.map(s =>
-    '<tr>' +
-    '<td>' + s.email + '</td>' +
-    '<td>' + s.plan + '</td>' +
-    '<td>' + s.rail + '</td>' +
-    '<td>' + fmtAmount(s.currency, s.amount_minor) + '</td>' +
-    '<td><span class="tag tag-' + s.status + '">' + s.status + '</span></td>' +
-    '<td style="font-size:12px;color:#666">' + fmtDate(s.current_period_end) + '</td>' +
-    '</tr>'
-  ).join('');
+  tbody.replaceChildren();
+  if (!subs || !subs.length) {
+    const tr = el('tr');
+    const td = el('td', {text: 'No subscriptions yet', cls: 'empty'});
+    td.colSpan = 6;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    return;
+  }
+  for (const s of subs) {
+    const tr = el('tr');
+    tr.appendChild(el('td', {text: s.email}));
+    tr.appendChild(el('td', {text: s.plan}));
+    tr.appendChild(el('td', {text: s.rail}));
+    tr.appendChild(el('td', {text: fmtAmount(s.currency, s.amount_minor)}));
+    const stTd = el('td');
+    stTd.appendChild(el('span', {text: s.status, cls: 'tag tag-' + s.status}));
+    tr.appendChild(stTd);
+    tr.appendChild(el('td', {text: fmtDate(s.current_period_end), style: 'font-size:12px;color:#666'}));
+    tbody.appendChild(tr);
+  }
 }
 
 function filterTable() {
