@@ -594,10 +594,19 @@ async def stripe_webhook(request: Request, session: AsyncSession = Depends(get_d
     body = await request.body()
     signature = request.headers.get("stripe-signature", "")
     try:
-        event = stripe_service.verify_and_parse_event(body, signature)
+        stripe_service.verify_and_parse_event(body, signature)
     except Exception as e:
         logger.warning("Stripe webhook verification failed: %s", e)
         raise HTTPException(status_code=400, detail="invalid signature")
+    # Signature is verified against the raw bytes; parse them as a plain dict so
+    # the handler can use .get() throughout. The stripe.Event object is a
+    # StripeObject whose attribute access raises on .get(), which 500'd every
+    # webhook and left paid keys un-activated.
+    try:
+        event = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as e:
+        logger.warning("Stripe webhook body not valid JSON: %s", e)
+        raise HTTPException(status_code=400, detail="invalid payload")
     result = await stripe_service.handle_event(session, event)
     return JSONResponse(result)
 
