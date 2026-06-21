@@ -154,9 +154,16 @@ async def _find_sub_by_external_id(
 
 
 async def handle_event(session: AsyncSession, event) -> dict:
-    etype = event.get("type") if isinstance(event, dict) else event["type"]
-    data = event["data"]["object"] if isinstance(event, dict) else event["data"]["object"]
-    event_id = event.get("id") if isinstance(event, dict) else event.get("id", "")
+    # Stripe events are StripeObjects, not plain dicts. They support subscript
+    # access (which also works for plain dicts in tests), but calling .get() on
+    # the StripeObject raises AttributeError — the previous code did exactly that
+    # for event_id, 500-ing EVERY webhook so paid keys were never activated.
+    etype = event["type"]
+    data = event["data"]["object"]
+    try:
+        event_id = event["id"]
+    except (KeyError, TypeError):
+        event_id = ""
 
     # Replay protection — Stripe events have a stable `id`. Reject duplicates
     # so a stolen / replayed valid event can't repeatedly upgrade tiers or
